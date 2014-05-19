@@ -110,7 +110,7 @@
 
               var download_element = document.getElementById('download_link');
               var data = "text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(exporter.parse(geometry)));
-              download_element.innerHTML += '<a href="data:' + data + '" download="data.txt">download JSON</a>';
+              download_element.innerHTML += '<a href="data:' + data + '" download="data.js">download JSON</a>';
             }
             if ( file.name.match(/\.obj$/) )
             {
@@ -123,38 +123,63 @@
               var material = new THREE.MeshBasicMaterial( { map: texture } );
 
               for ( var i=0; i<object.children.length; i++ )
+              {
                 object.children[i].material = material;
+                object.children[i].geometry = THREE.BufferGeometryUtils.fromGeometry( object.children[i].geometry );
+              }
               scene.add( object );
-              loadedModel = object;
 
               var exporter = new THREE.BufferGeometryExporter();
 
               var download_element = document.getElementById('download_link');
               var data = "text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(exporter.parse(THREE.BufferGeometryUtils.fromGeometry( object.children[0].geometry) )));
-              download_element.innerHTML += ' <a href="data:' + data + '" download="data.txt">download JSON</a>';
+              download_element.innerHTML += ' <a href="data:' + data + '" download="data.js">download JSON</a>';
             }
-            if ( file.name.match(/\.obj$/) )
+            if ( file.name.match(/\.js$/) )
             {
-              // load something
-              var loader = new THREE.OBJLoader();
+              // initialize our geometry
+              var geometry = new THREE.BufferGeometry();
+              var input = JSON.parse( event.target.result );
 
-              var object = loader.parse( event.target.result );
+              // we need a way of creating an array of the proper type,
+              // defining those types here
+              var types = [ Int8Array, Uint8Array, Uint8ClampedArray, Int16Array, Uint16Array, Int32Array, Uint32Array, Float32Array, Float64Array ];
+              for ( var attr in input.attributes )
+              {
+                // copy over an attribute
+                var sourceAttr = input.attributes[ attr ];
+                var sourceArray = sourceAttr.array;
+                var attribute = {
+                  itemSize: sourceAttr.itemSize,
+                  numItems: sourceAttr.numItems,
+                  array: null
+                };
+                // detect our type
+                var type = sourceAttr.type;
+                function functionName(fun) {
+                  var ret = fun.toString();
+                  ret = ret.substr('function '.length);
+                  ret = ret.substr(0, ret.indexOf('('));
+                  return ret;
+                }
+                for ( var i = 0, il = types.length; i < il; i ++ ) {
+                  var type = types[ i ];
+                  if ( sourceAttr.type == functionName(type) ) {
+                    attribute.array = new type( sourceArray );
+                    break;
+                  }
+                }
+                // add this attribute
+                geometry.attributes[ attr ] = attribute;
+              }
+
               var texture = THREE.ImageUtils.loadTexture( 'textures/test.png' );
               texture.anisotropy = renderer.getMaxAnisotropy();
               var material = new THREE.MeshBasicMaterial( { map: texture } );
+              var mesh = new THREE.Mesh( geometry, material );
 
-              for ( var i=0; i<object.children.length; i++ )
-                object.children[i].material = material;
-              scene.add( object );
-              loadedModel = object;
-
-              var exporter = new THREE.BufferGeometryExporter();
-
-              var download_element = document.getElementById('download_link');
-              var data = "text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(exporter.parse(THREE.BufferGeometryUtils.fromGeometry( object.children[0].geometry) )));
-              download_element.innerHTML += ' <a href="data:' + data + '" download="data.txt">download JSON</a>';
+              scene.add( mesh );
             }
-
 
           }
 
