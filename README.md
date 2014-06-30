@@ -1,3 +1,3 @@
-Converts certain 3D model formats into three.js format
+uses three.js to draw models
 
-Created testing purposes 
+Created for testing purposes 

@@ -6,14 +6,11 @@
 		<style>
 			body {
 				margin: 0px;
-				background-color: #000000;
+				background-color: #fff;
 				overflow: hidden;
-        color: #fff;
+        color: #0f0;
 			}
-      #download_link {
-        position: absolute;
-        bottom: 0px;
-      }
+
       #holder {
         position: absolute;
         top: 50%;
@@ -30,220 +27,319 @@
         background-color: rgba(255,255,255,.2);
       }
 
+      #model_palette {
+        position: absolute;
+        width: 300px;
+        height: 100%;
+        right: 0px;
+        z-index: 1;
+      }
+
 		</style>
 	</head>
 	<body>
 
 		<script src="/three.js"></script>
+		<script src="/stats.min.js"></script>
     <script src="/loaders/STLLoader.js"></script>
     <script src="/loaders/OBJLoader.js"></script>
     <script src="/loaders/BufferGeometryLoader.js"></script>
-    <script src="/wip/TypedGeometry.js"></script>
     <script src="/wip/BufferGeometryUtils.js"></script>
     <script src="/exporters/BufferGeometryExporter.js"></script>
     <script src="/exporters/TypedGeometryExporter.js"></script>
 
-		<script>
-      window.onload = function() {
+    <script src="/FileHandler.js"></script>
+    <script src="/Brush.js"></script>
 
-        // setup file drop area
-        var holder = document.getElementById('holder');
-        holder.ondragover = function () { this.className = 'hover'; return false; };
-        holder.ondragend = function () { this.className = ''; return false; };
-        holder.ondrop = function (e) {
-          this.className = '';
-          e.preventDefault();
+    <script>
 
-          var file = e.dataTransfer.files[0];
-          var reader = new FileReader();
-          reader.onload = function (event) {
-            console.log(event.target.result);
-            var download_element = document.getElementById('download_link');
-            // FIXME the normal way of elementing didn't work?
-//            var download_link = document.createElement('a');
-//            download_link.innerHTML = "download original";
-//            download_link.setAttribute("href", "data:"+event.target.result);
-//            download_link.setAttribute("download", "data.file");
-//            download_element.appendChild(download_link);
-//            download_element.innerHTML += ' <a href="data:' + event.target.result + '" download="data.file">download original</a>';
+      var container, stats;
+      var scene;
+      var cameraMain, rendererMain;
+      var cameraAux, rendererAux;
+      var projector, plane;
+      var cursor3d;
 
-            if ( file.type.match("^image") )
-            {
+      var raycaster, theta = 270,
+      isShiftDown = false, isCtrlDown = false,
+      target = new THREE.Vector3( 0, 0, 0 );
+      var normalMatrix = new THREE.Matrix3();
 
-              if ( scene.children.length )
-              {
-                var texture = THREE.ImageUtils.loadTexture( event.target.result );
-                texture.anisotropy = renderer.getMaxAnisotropy();
-                var material = new THREE.MeshBasicMaterial( { map: texture } );
-                var object = scene.children[scene.children.length-1];
-                for ( var i=0; i<object.children.length; i++ )
-                  object.children[i].material = material;
-              }
-              else
-              {
-                holder.style.background = 'url(' + event.target.result + ') no-repeat center';
-              }
+      var cubeGeometry = new THREE.CubeGeometry( 50, 50, 50 );
+      var cubeMaterial = new THREE.MeshLambertMaterial( { color: 0x00ff80, overdraw: 0.5 } );
+      var cursorMaterial = new THREE.MeshLambertMaterial( { color: 0x555555 } );
+
+      var objects = [];
+
+      var palette = new ToolPalette();
+      var cube = new THREE.Mesh( cubeGeometry, cursorMaterial );
+      var cubeBrush = new Brush( palette, "cube", cube );
+      cursor3d = cubeBrush.object;
+
+      init();
+      animate();
+
+      function init() {
+
+        setupFileDrop( );
+
+        container = document.createElement( 'div' );
+        document.body.appendChild( container );
+
+        var info = document.createElement( 'div' );
+        info.style.position = 'absolute';
+        info.style.top = '10px';
+        info.style.width = '100%';
+        info.style.textAlign = 'center';
+        info.innerHTML = 'Drag in .obj or ascii .stl files';
+        container.appendChild( info );
+
+        scene = new THREE.Scene();
+
+        // Grid
+
+        var size = 500, step = 50;
+
+        var geometry = new THREE.Geometry();
+
+        for ( var i = - size; i <= size; i += step ) {
+
+          geometry.vertices.push( new THREE.Vector3( - size, i, 0 ) );
+          geometry.vertices.push( new THREE.Vector3(   size, i, 0 ) );
+
+          geometry.vertices.push( new THREE.Vector3( i, - size, 0 ) );
+          geometry.vertices.push( new THREE.Vector3( i,   size, 0 ) );
+
+        }
+
+        var material = new THREE.LineBasicMaterial( { color: 0xffffff, opacity: 0.2 } );
+
+        var line = new THREE.Line( geometry, material );
+        line.type = THREE.LinePieces;
+        scene.add( line );
+
+        // intersect ground
+
+        projector = new THREE.Projector();
+
+        plane = new THREE.Mesh( new THREE.PlaneGeometry( 1000, 1000 ), new THREE.MeshBasicMaterial() );
+        plane.visible = false;
+        scene.add( plane );
+
+        objects.push( plane );
+
+        var material = new THREE.MeshBasicMaterial( { color: 0xff0000, wireframe: true } );
+
+        // Lights
+
+        var ambientLight = new THREE.AmbientLight( 0x606060 );
+        scene.add( ambientLight );
+
+        var directionalLight = new THREE.DirectionalLight( 0xffffff );
+        directionalLight.position.x = Math.random() - 0.5;
+        directionalLight.position.y = Math.random() - 0.5;
+        directionalLight.position.z = Math.random() - 0.5;
+        directionalLight.position.normalize();
+        scene.add( directionalLight );
+
+        var directionalLight = new THREE.DirectionalLight( 0x808080 );
+        directionalLight.position.x = Math.random() - 0.5;
+        directionalLight.position.y = Math.random() - 0.5;
+        directionalLight.position.z = Math.random() - 0.5;
+        directionalLight.position.normalize();
+        scene.add( directionalLight );
+
+        // viewports and cameras
+        rendererMain = new THREE.CanvasRenderer();
+        rendererMain.setClearColor( 0x000000 );
+        container.appendChild(rendererMain.domElement);
+
+        cameraMain = new THREE.PerspectiveCamera( 40, rendererMain.domElement.width / rendererMain.domElement.height, 1, 10000 );
+        cameraMain.position.z = 800;
+
+        rendererAux = new THREE.CanvasRenderer();
+        rendererAux.setClearColor( 0x505070 );
+        rendererAux.setSize( 300, 300 );
+        container.appendChild(rendererAux.domElement);
+
+        //cameraAux = new THREE.OrthographicCamera( -1000, 1000, -1000, 1000, 1, 10000 );
+        cameraAux = new THREE.PerspectiveCamera( 40, rendererAux.domElement.width / rendererAux.domElement.height, 1, 10000 );
+        cameraAux.aspect = rendererAux.domElement.width / rendererAux.domElement.height;
+        cameraAux.updateProjectionMatrix();
+        cameraAux.position.x = 0;
+        cameraAux.position.y = 0;
+        cameraAux.position.z = 1400;
+        cameraAux.lookAt( target );
+
+        // setup initial sizes for things
+        onWindowResize();
+
+        rendererMain.mouse = new THREE.Vector3( 0, 10000, 0.5 );
+        stats = new Stats();
+        stats.domElement.style.position = 'absolute';
+        stats.domElement.style.top = '0px';
+        container.appendChild( stats.domElement );
+
+        document.addEventListener( 'mousemove', onDocumentMouseMove, false );
+        document.addEventListener( 'mousedown', onDocumentMouseDown, false );
+        document.addEventListener( 'keydown', onDocumentKeyDown, false );
+        document.addEventListener( 'keyup', onDocumentKeyUp, false );
+
+        window.addEventListener( 'resize', onWindowResize, false );
+
+      }
+
+      function onWindowResize() {
+
+        rendererMain.setSize( window.innerWidth-300, window.innerHeight );
+        cameraMain.aspect = rendererMain.domElement.width / rendererMain.domElement.height;
+        cameraMain.updateProjectionMatrix();
+
+      }
+
+      function onDocumentMouseMove( event ) {
+
+        event.preventDefault();
+
+        rendererMain.mouse.x = ( event.clientX / rendererMain.domElement.width ) * 2 - 1;
+        rendererMain.mouse.y = - ( event.clientY / rendererMain.domElement.height ) * 2 + 1;
+
+      }
+
+      function onDocumentMouseDown( event ) {
+
+        event.preventDefault();
+
+        var intersects = raycaster.intersectObjects( objects );
+
+        if ( intersects.length > 0 ) {
+
+          var intersect = intersects[ 0 ];
+
+          if ( isShiftDown ) {
+
+            // if shift is down try and remove shit?
+            if ( intersect.object != plane ) {
+
+              scene.remove( intersect.object );
+
+              objects.splice( objects.indexOf( intersect.object ), 1 );
+
             }
-            if ( file.name.match(/\.stl$/) )
-            {
-              // TODO none of the STL stuff works
-              var loader = new THREE.STLLoader();
 
-              var geometry = loader.parse( event.target.result );
-              var texture = THREE.ImageUtils.loadTexture( 'textures/test.png' );
-              texture.anisotropy = renderer.getMaxAnisotropy();
-              var material = new THREE.MeshBasicMaterial( { map: texture } );
-
-              var mesh = new THREE.Mesh( geometry, material );
-
-              mesh.position.set( 0, - 0.25, 0.6 );
-              mesh.rotation.set( 0, - Math.PI / 2, 0 );
-              mesh.scale.set( 50, 50, 50 );
-
-              mesh.castShadow = true;
-              mesh.receiveShadow = true;
-
-              scene.add( mesh );
-              loadedModel = mesh;
-
-              var exporter = new THREE.TypedGeometryExporter();
-
-              var download_element = document.getElementById('download_link');
-              var data = "text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(exporter.parse(geometry)));
-              download_element.innerHTML += '<a href="data:' + data + '" download="data.js">download JSON</a>';
-            }
-            if ( file.name.match(/\.obj$/) )
-            {
-              // load something
-              var loader = new THREE.OBJLoader();
-
-              var object = loader.parse( event.target.result );
-              var texture = THREE.ImageUtils.loadTexture( 'textures/test.png' );
-              texture.anisotropy = renderer.getMaxAnisotropy();
-              var material = new THREE.MeshBasicMaterial( { map: texture } );
-
-              for ( var i=0; i<object.children.length; i++ )
-              {
-                object.children[i].material = material;
-                object.children[i].geometry = THREE.BufferGeometryUtils.fromGeometry( object.children[i].geometry );
-              }
-              scene.add( object );
-
-              var exporter = new THREE.BufferGeometryExporter();
-
-              var download_element = document.getElementById('download_link');
-              var data = "text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(exporter.parse(THREE.BufferGeometryUtils.fromGeometry( object.children[0].geometry) )));
-              download_element.innerHTML += ' <a href="data:' + data + '" download="data.js">download JSON</a>';
-            }
-            if ( file.name.match(/\.js$/) )
-            {
-              // initialize our geometry
-              var geometry = new THREE.BufferGeometry();
-              var input = JSON.parse( event.target.result );
-
-              // we need a way of creating an array of the proper type,
-              // defining those types here
-              var types = [ Int8Array, Uint8Array, Uint8ClampedArray, Int16Array, Uint16Array, Int32Array, Uint32Array, Float32Array, Float64Array ];
-              for ( var attr in input.attributes )
-              {
-                // copy over an attribute
-                var sourceAttr = input.attributes[ attr ];
-                var sourceArray = sourceAttr.array;
-                var attribute = {
-                  itemSize: sourceAttr.itemSize,
-                  numItems: sourceAttr.numItems,
-                  array: null
-                };
-                // detect our type
-                var type = sourceAttr.type;
-                function functionName(fun) {
-                  var ret = fun.toString();
-                  ret = ret.substr('function '.length);
-                  ret = ret.substr(0, ret.indexOf('('));
-                  return ret;
-                }
-                for ( var i = 0, il = types.length; i < il; i ++ ) {
-                  var type = types[ i ];
-                  if ( sourceAttr.type == functionName(type) ) {
-                    attribute.array = new type( sourceArray );
-                    break;
-                  }
-                }
-                // add this attribute
-                geometry.attributes[ attr ] = attribute;
-              }
-
-              var texture = THREE.ImageUtils.loadTexture( 'textures/test.png' );
-              texture.anisotropy = renderer.getMaxAnisotropy();
-              var material = new THREE.MeshBasicMaterial( { map: texture } );
-              var mesh = new THREE.Mesh( geometry, material );
-
-              scene.add( mesh );
-            }
-
+            return;
           }
 
-          if ( file.type.match("^image") )
-            reader.readAsDataURL(file);
+          // get the normal at this point in global coords
+          normalMatrix.getNormalMatrix( intersect.object.matrixWorld );
+          var normal = intersect.face.normal.clone();
+          normal.applyMatrix3( normalMatrix ).normalize();
+
+          var voxel = cursor3d.clone();
+          if ( voxel.material )
+          {
+            voxel.material = cubeMaterial;
+            objects.push( voxel );
+          }
           else
-            reader.readAsText(file);
+          {
+            for ( var i=0; i<voxel.children.length; i++ )
+            {
+              voxel.children[i].material = cubeMaterial;
+              objects.push( voxel.children[i] );
+            }
+          }
 
-          return false;
-        };
-      };
+          // get the rotation needed so z-axis is aligned with normal
+          var normalRotation = new THREE.Quaternion();
+          normalRotation.setFromUnitVectors( new THREE.Vector3(0,1,0), normal );
+          voxel.rotation.setFromQuaternion(normalRotation);
 
-			var camera, scene, renderer;
-			var mesh;
-      var loadedModel;
+          voxel.position.addVectors( intersect.point, normal );
+          scene.add( voxel );
 
-			init();
-			animate();
-
-			function init() {
-				renderer = new THREE.WebGLRenderer();
-				renderer.setSize( window.innerWidth, window.innerHeight );
-				document.body.appendChild( renderer.domElement );
-				window.addEventListener( 'resize', onWindowResize, false );
-
-				camera = new THREE.PerspectiveCamera( 45, window.innerWidth / window.innerHeight, 1, 1000 );
-				camera.position.z = 20;
-
-				scene = new THREE.Scene();
-
-        // test box
-        if ( false )
-        {
-          var geometry = new THREE.BoxGeometry( 2, 2, 2 );
-          var texture = THREE.ImageUtils.loadTexture( 'textures/test.png' );
-          texture.anisotropy = renderer.getMaxAnisotropy();
-          var material = new THREE.MeshBasicMaterial( { map: texture } );
-          mesh = new THREE.Mesh( geometry, material );
-          scene.add( mesh );
         }
-			}
+      }
 
-			function onWindowResize() {
-				camera.aspect = window.innerWidth / window.innerHeight;
-				camera.updateProjectionMatrix();
-				renderer.setSize( window.innerWidth, window.innerHeight );
-			}
+      function onDocumentKeyDown( event ) {
 
-			function animate() {
-				requestAnimationFrame( animate );
+        switch( event.keyCode ) {
 
-        for ( var i=0; i<scene.children.length; i++ )
-        {
-          scene.children[i].rotation.x += 0.005;
-          scene.children[i].rotation.y += 0.01;
-          scene.children[i].rotation.z += 0.001*(i);
+          case 16: isShiftDown = true; break;
+          case 17: isCtrlDown = true; break;
+
         }
 
-				renderer.render( scene, camera );
-			}
+      }
 
-		</script>
+      function onDocumentKeyUp( event ) {
 
-    <div id="download_link"></div>
-    <div id="holder"></div>
+        switch( event.keyCode ) {
+
+          case 16: isShiftDown = false; break;
+          case 17: isCtrlDown = false; break;
+
+        }
+      }
+
+      function save() {
+
+        window.open( rendererMain.domElement.toDataURL('image/png'), 'mywindow' );
+        return false;
+
+      }
+
+      //
+
+      function animate() {
+
+        requestAnimationFrame( animate );
+
+        render();
+        stats.update();
+
+      }
+
+      function render() {
+
+        if ( isCtrlDown ) {
+
+          theta += rendererMain.mouse.x * 3;
+
+        }
+
+        cameraMain.position.x = 1400 * Math.sin( theta * Math.PI / 360 );
+        cameraMain.position.y = 1400 * Math.cos( theta * Math.PI / 360 );
+        cameraMain.up.set( 0, 0, 1 );
+        cameraMain.lookAt( target );
+
+        raycaster = projector.pickingRay( rendererMain.mouse.clone(), cameraMain );
+
+        var intersects = raycaster.intersectObjects( objects );
+        scene.remove( cursor3d );
+        if ( intersects.length > 0 ) {
+          var intersect = intersects[0];
+
+          // get the normal at this point in global coords
+          normalMatrix.getNormalMatrix( intersect.object.matrixWorld );
+          var normal = intersect.face.normal.clone();
+          normal.applyMatrix3( normalMatrix ).normalize();
+          // get the rotation needed so z-axis is aligned with normal
+          var normalRotation = new THREE.Quaternion();
+          normalRotation.setFromUnitVectors( new THREE.Vector3(0,1,0), normal );
+          cursor3d.rotation.setFromQuaternion(normalRotation);
+
+          cursor3d.position.copy( intersect.point );
+          scene.add( cursor3d );
+        }
+
+        rendererMain.render( scene, cameraMain );
+        rendererAux.render( scene, cameraAux );
+
+      }
+
+
+    </script>
+
 	</body>
 </html>
