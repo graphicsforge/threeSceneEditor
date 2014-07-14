@@ -48,12 +48,19 @@
     <script src="/exporters/BufferGeometryExporter.js"></script>
     <script src="/exporters/TypedGeometryExporter.js"></script>
 
+    <script src="/exporters/MaterialExporter.js"></script>
+    <script src="/exporters/GeometryExporter.js"></script>
+    <script src="/exporters/ObjectExporter.js"></script>
+    <script src="/exporters/SceneExporter.js"></script>
+
     <script src="/FileHandler.js"></script>
     <script src="/Brush.js"></script>
+    <script src="/WindowEventManager.js"></script>
 
     <script>
 
       var container, stats;
+      // TODO put this in a class
       var scene;
       var cameraMain, rendererMain;
       var cameraAux, rendererAux;
@@ -61,12 +68,14 @@
       var cursor3d;
 
       var raycaster, theta = 270,
-      isShiftDown = false, isCtrlDown = false,
+      windowEventManager = new WindowEventManager();
+      windowEventManager.bindUIListeners();
       target = new THREE.Vector3( 0, 0, 0 );
       var normalMatrix = new THREE.Matrix3();
 
       var cubeGeometry = new THREE.CubeGeometry( 50, 50, 50 );
-      var cubeMaterial = new THREE.MeshLambertMaterial( { color: 0x00ff80, overdraw: 0.5 } );
+      var defaultMaterial = new THREE.MeshLambertMaterial( { color: 0x00ff80, overdraw: 0.5 } );
+      var selectedMaterial = new THREE.MeshLambertMaterial( { color: 0xf05f80 } );
       var cursorMaterial = new THREE.MeshLambertMaterial( { color: 0x555555 } );
 
       var objects = [];
@@ -74,6 +83,7 @@
       var palette = new ToolPalette();
       var cube = new THREE.Mesh( cubeGeometry, cursorMaterial );
       var cubeBrush = new Brush( palette, "cube", cube );
+      cubeBrush.select();
       cursor3d = cubeBrush.object;
 
       init();
@@ -91,7 +101,7 @@
         info.style.top = '10px';
         info.style.width = '100%';
         info.style.textAlign = 'center';
-        info.innerHTML = 'Drag in .obj or ascii .stl files';
+        info.innerHTML = 'Drag in .obj or ascii .stl files<div id="download_link"></div>';
         container.appendChild( info );
 
         scene = new THREE.Scene();
@@ -171,8 +181,6 @@
         cameraAux.position.z = 1400;
         cameraAux.lookAt( target );
 
-        // setup initial sizes for things
-        onWindowResize();
 
         rendererMain.mouse = new THREE.Vector3( 0, 10000, 0.5 );
         stats = new Stats();
@@ -180,116 +188,80 @@
         stats.domElement.style.top = '0px';
         container.appendChild( stats.domElement );
 
-        document.addEventListener( 'mousemove', onDocumentMouseMove, false );
-        document.addEventListener( 'mousedown', onDocumentMouseDown, false );
-        document.addEventListener( 'keydown', onDocumentKeyDown, false );
-        document.addEventListener( 'keyup', onDocumentKeyUp, false );
 
-        window.addEventListener( 'resize', onWindowResize, false );
+        // setup initial sizes for things
+        var resize = function() {
+          rendererMain.setSize( window.innerWidth-300, window.innerHeight );
+          cameraMain.aspect = rendererMain.domElement.width / rendererMain.domElement.height;
+          cameraMain.updateProjectionMatrix();
+        }
+        resize();
+        windowEventManager.on("resize", function() {
+          resize();
+        });
 
-      }
-
-      function onWindowResize() {
-
-        rendererMain.setSize( window.innerWidth-300, window.innerHeight );
-        cameraMain.aspect = rendererMain.domElement.width / rendererMain.domElement.height;
-        cameraMain.updateProjectionMatrix();
-
-      }
-
-      function onDocumentMouseMove( event ) {
-
-        event.preventDefault();
-
-        rendererMain.mouse.x = ( event.clientX / rendererMain.domElement.width ) * 2 - 1;
-        rendererMain.mouse.y = - ( event.clientY / rendererMain.domElement.height ) * 2 + 1;
-
-      }
-
-      function onDocumentMouseDown( event ) {
-
-        event.preventDefault();
-
-        var intersects = raycaster.intersectObjects( objects );
-
-        if ( intersects.length > 0 ) {
-
-          var intersect = intersects[ 0 ];
-
-          if ( isShiftDown ) {
-
-            // if shift is down try and remove shit?
-            if ( intersect.object != plane ) {
-
-              scene.remove( intersect.object );
-
-              objects.splice( objects.indexOf( intersect.object ), 1 );
-
+        windowEventManager.on("keyup", function(event) {
+          if ( event.which == 8 || // backspace
+               event.which == 46 ) { // delete
+            for ( var i=0; i<objects.length; i++ ) {
+              if ( !objects[i].selected )
+                continue;
+              scene.remove( objects[i] );
+              objects.splice( i--, 1 );
             }
+          }
+        });
+        windowEventManager.on("mousemove", function(event) {
+          event.preventDefault();
 
+          if ( windowEventManager.keyboard[82] )
+          {
+            // if the 'R' key is down, rotate
+            objects.forEach( function(object) {
+              if ( !object.selected )
+                return;
+              object.rotation.y += windowEventManager.mouseDiff[0]/180;
+            });
             return;
           }
-
-          // get the normal at this point in global coords
-          normalMatrix.getNormalMatrix( intersect.object.matrixWorld );
-          var normal = intersect.face.normal.clone();
-          normal.applyMatrix3( normalMatrix ).normalize();
-
-          var voxel = cursor3d.clone();
-          if ( voxel.material )
-          {
-            voxel.material = cubeMaterial;
-            objects.push( voxel );
-          }
-          else
-          {
-            for ( var i=0; i<voxel.children.length; i++ )
-            {
-              voxel.children[i].material = cubeMaterial;
-              objects.push( voxel.children[i] );
+          rendererMain.mouse.x = ( event.clientX / rendererMain.domElement.clientWidth ) * 2 - 1;
+          rendererMain.mouse.y = - ( event.clientY / rendererMain.domElement.clientHeight ) * 2 + 1;
+        });
+        windowEventManager.on("mousedown", function(event) {
+          var intersects = raycaster.intersectObjects( objects );
+          if ( intersects.length > 0 ) {
+            var intersect = intersects[ 0 ];
+            if ( windowEventManager.keyboard[16] ) {
+              // if shift is down try to select
+              if ( intersect.object != plane ) {
+                if ( intersect.object.selected ) {
+                  intersect.object.material = defaultMaterial;
+                  intersect.object.selected = false;
+                } else {
+                  intersect.object.material = selectedMaterial;
+                  intersect.object.selected = true;
+                }
+              }
+              return;
             }
+            palette.intersectClick(scene, objects, intersect);
+            updateSave();
           }
-
-          // get the rotation needed so z-axis is aligned with normal
-          var normalRotation = new THREE.Quaternion();
-          normalRotation.setFromUnitVectors( new THREE.Vector3(0,1,0), normal );
-          voxel.rotation.setFromQuaternion(normalRotation);
-
-          voxel.position.addVectors( intersect.point, normal );
-          scene.add( voxel );
-
-        }
+        });
       }
 
-      function onDocumentKeyDown( event ) {
 
-        switch( event.keyCode ) {
-
-          case 16: isShiftDown = true; break;
-          case 17: isCtrlDown = true; break;
-
-        }
-
-      }
-
-      function onDocumentKeyUp( event ) {
-
-        switch( event.keyCode ) {
-
-          case 16: isShiftDown = false; break;
-          case 17: isCtrlDown = false; break;
-
-        }
-      }
-
-      function save() {
-
-        window.open( rendererMain.domElement.toDataURL('image/png'), 'mywindow' );
+      function updateSave()
+      {
+        var download_element = document.getElementById('download_link');
+        var exporter = new THREE.ObjectExporter();
+console.log(exporter.parse(scene));
+        var data = "text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(exporter.parse(scene)));
+        download_element.innerHTML = ' <a href="data:' + data + '" download="data.js">save</a>';
+        // TODO export scene
         return false;
-
       }
 
-      //
 
       function animate() {
 
@@ -302,7 +274,7 @@
 
       function render() {
 
-        if ( isCtrlDown ) {
+        if ( windowEventManager.keyboard[17] ) { // ctrl down
 
           theta += rendererMain.mouse.x * 3;
 
